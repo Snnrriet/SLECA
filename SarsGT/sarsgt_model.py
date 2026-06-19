@@ -257,7 +257,6 @@ class SarsGT(nn.Module):
         print('The training for the SarsGT model has been completed.')
         return Sars_gnn
 
-
 def SarsGT_pred(RNA_matrix, SarsGT_gnn, indices, nheads, nodes_id, cell_size, device, gene_names, node_dim_reduction_model):
     n_batch = len(indices)
     embedding = []
@@ -270,7 +269,6 @@ def SarsGT_pred(RNA_matrix, SarsGT_gnn, indices, nheads, nodes_id, cell_size, de
 
     # Initialize global attention matrices, creating one matrix for each head
     global_attention_matrices = {f'head-{i+1}': torch.zeros(num_genes, num_cells, device=device) for i in range(nheads)}
-
     with torch.no_grad():
         for batch_id in tqdm(range(n_batch)):
             gene_index = indices[batch_id]['gene_index']
@@ -280,33 +278,85 @@ def SarsGT_pred(RNA_matrix, SarsGT_gnn, indices, nheads, nodes_id, cell_size, de
             node_feature = [cell_feature, gene_feature]
             
             gene_cell_sub = RNA_matrix[list(gene_index),][:, list(cell_index)]
-            gene_cell_edge_index = torch.LongTensor([np.nonzero(gene_cell_sub)[0] + gene_cell_sub.shape[1], np.nonzero(gene_cell_sub)[1]]).to(device)
             
-            edge_index = gene_cell_edge_index
-            node_type = torch.LongTensor(np.array(list(np.zeros(len(cell_index))) + list(np.ones(len(gene_index))))).to(device)
-            edge_type = torch.LongTensor(np.array(list(np.zeros(gene_cell_edge_index.shape[1])))).to(device)
+            nonzero_gene_idx = np.nonzero(gene_cell_sub)[0]
+            nonzero_cell_idx = np.nonzero(gene_cell_sub)[1]
+            
+            num_edges = nonzero_gene_idx.shape[0]
+            num_cells_in_batch = gene_cell_sub.shape[1]
+            
+            # gene -> cell
+            gene_to_cell_src = nonzero_gene_idx + num_cells_in_batch
+            gene_to_cell_dst = nonzero_cell_idx
+            
+            # cell -> gene
+            cell_to_gene_src = nonzero_cell_idx
+            cell_to_gene_dst = nonzero_gene_idx + num_cells_in_batch
+            
+            edge_src = np.concatenate([
+                gene_to_cell_src,
+                cell_to_gene_src
+            ])
+            
+            edge_dst = np.concatenate([
+                gene_to_cell_dst,
+                cell_to_gene_dst
+            ])
+            
+            edge_index = torch.LongTensor(
+                [edge_src, edge_dst]
+            ).to(device)
+            
+            node_type = torch.LongTensor(
+                np.array(
+                    list(np.zeros(len(cell_index))) +
+                    list(np.ones(len(gene_index)))
+                )
+            ).to(device)
+            
+            edge_type = torch.LongTensor(
+                np.array(
+                    list(np.zeros(num_edges)) +
+                    list(np.ones(num_edges))
+                )
+            ).to(device)
             
             node_rep = SarsGT_gnn.forward(node_feature, node_type, edge_index, edge_type).to(device)
             
             # Retrieve current subgraph's attention weights
-            attention_weights = node_dim_reduction_model.subgraph_attention_weights[batch_id]
+            attention_weights = SarsGT_gnn.final_layer_attention_weights
             
             # Get global cell and gene indices for the current subgraph
             global_gene_indices = indices[batch_id]['gene_index']
             global_cell_indices = indices[batch_id]['cell_index']
             
             # Iterate through each edge in the current subgraph and update global attention matrices
-            for (local_gene_idx, local_cell_idx), weights_vector in attention_weights.items():
-                global_gene_idx = global_gene_indices[local_gene_idx-len(indices[batch_id]['cell_index'])]
+            num_cells_in_batch = len(indices[batch_id]["cell_index"])
+            
+            for (src_idx, dst_idx), weights_vector in attention_weights.items():
+                # gene -> cell
+                if src_idx < num_cells_in_batch:
+                    continue
+                if dst_idx >= num_cells_in_batch:
+                    continue
+            
+                local_gene_idx = src_idx - num_cells_in_batch
+                local_cell_idx = dst_idx
+            
+                global_gene_idx = global_gene_indices[local_gene_idx]
                 global_cell_idx = global_cell_indices[local_cell_idx]
-
-                # Update global attention matrices for each head
+            
                 for head_index in range(nheads):
-                    head_key = f'head-{head_index+1}'
+                    head_key = f"head-{head_index + 1}"
                     weight = weights_vector[head_index]
-                    # Correctly convert numpy.float32 to torch.FloatTensor and assign
-                    global_attention_matrices[head_key][global_gene_idx, global_cell_idx] = torch.tensor(weight, device=device)
-
+                
+                    if torch.is_tensor(weight):
+                        weight = weight.detach()
+                    else:
+                        weight = torch.tensor(float(weight), device=device)
+                
+                    global_attention_matrices[head_key][global_gene_idx, global_cell_idx] = weight
+                
             cell_emb = node_rep[node_type == 0]
             gene_emb = node_rep[node_type == 1]
 
