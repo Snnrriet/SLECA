@@ -79,7 +79,7 @@ def batch_select_whole(RNA_matrix, neighbor=[20], cell_size=30):
     indices_ss = []
 
     with mp.Pool(48) as pool:  # Use 48 processes
-        results = list(tqdm(pool.imap_unordered(batch_process, [(i, n_batch, node_ids, RNA_matrix, neighbor, cell_size) for i in range(n_batch)]), total=n_batch))
+        results = list(tqdm(pool.imap(batch_process, [(i, n_batch, node_ids, RNA_matrix, neighbor, cell_size) for i in range(n_batch)]), total=n_batch))
 
     indices_ss = [res[0] for res in results]
     dic = {k: v for res in results for k, v in res[1].items()}
