@@ -107,7 +107,7 @@ class LabelSmoothing(nn.Module):
         return loss.mean()
 
 
-def initial_clustering(RNA_matrix, custom_n_neighbors=None, n_pcs=40, custom_resolution=None, use_rep=None):
+def initial_clustering(RNA_matrix, custom_n_neighbors=None, n_pcs=50, custom_resolution=None, use_rep=None):
     print(
         '\tWhen the number of cells is less than or equal to 500, it is recommended to set the resolution value to 0.2.')
     print('\tWhen the number of cells is within the range of 500 to 5000, the resolution value should be set to 0.5.')
@@ -132,6 +132,13 @@ def initial_clustering(RNA_matrix, custom_n_neighbors=None, n_pcs=40, custom_res
 
     sc.pp.normalize_total(adata, target_sum=1e4)
     sc.pp.log1p(adata)
+
+    sc.tl.pca(
+        adata,
+        n_comps=n_pcs,
+        svd_solver="arpack",
+        random_state=0
+    )
     
     # Use the user-provided embedding if available, otherwise use n_pcs
     if use_rep is not None:
